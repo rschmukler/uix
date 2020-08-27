@@ -17,7 +17,19 @@
                       (done)
                       (is (== 2 (swap! state inc))))))]
     (async done
-      (t/render [f-state done]))))
+           (t/render [f-state done]))))
+
+(deftest test-state-watch
+  (let [f-state
+        (fn [done]
+          (let [state (core/state 1)
+                args  (core/ref nil)]
+            (add-watch state :testing #(reset! args (vec %&)))
+            (if (== 1 @state)
+              (do (swap! state inc)
+                  (is (= [:testing state 1 2] @args)))
+              (done))))]
+    (async done (t/render [f-state done]))))
 
 (deftest test-cursor-in-hook
   (let [f-state (fn [done]
@@ -30,6 +42,19 @@
                       (is (== 2 (swap! x inc))))))]
     (async done
       (t/render [f-state done]))))
+
+(deftest test-cursor-watch
+  (let [f-cursor
+        (fn [done]
+          (let [state  (core/state {:count 1})
+                cursor (core/cursor-in state [:count])
+                args   (core/ref nil)]
+            (add-watch cursor :testing #(reset! args (vec %&)))
+            (if (== 1 @cursor)
+              (do (swap! state update :count inc)
+                  (is (= [:testing cursor 1 2] @args)))
+              (done))))]
+    (async done (t/render [f-cursor done]))))
 
 (deftest test-state-hook-identity
   (let [f-state (fn [done]
@@ -64,6 +89,18 @@
                       (done)))))]
     (async done
       (t/render [f-ref done]))))
+
+
+(deftest test-refhook-watch
+  (let [f-refhook
+        (fn [done]
+          (let [state (core/ref 1)
+                args  (core/ref nil)]
+            (add-watch state :testing  #(reset! args (vec %&)))
+            (swap! state inc)
+            (is (= [:testing state 1 2] @args))
+            (done)))]
+    (async done (t/render [f-refhook done]))))
 
 #_(deftest test-effect-hook
     (let [f-effect (fn [done]

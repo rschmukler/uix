@@ -7,7 +7,7 @@
 
 ;; == State hook ==
 #?(:cljs
-   (deftype StateHook [value set-value]
+   (deftype StateHook [value set-value watchers]
      Object
      (equiv [this other]
        (-equiv this other))
@@ -19,9 +19,20 @@
      (-deref [o]
        value)
 
+     IWatchable
+     (-notify-watches [this oldval newval]
+       (doseq [[k f] @watchers]
+         (f k this oldval newval)))
+     (-add-watch [_ k f]
+       (vswap! watchers assoc k f))
+     (-remove-watch [_ k]
+       (vswap! watchers dissoc k))
+
      IReset
      (-reset! [o new-value]
-       (set-value new-value)
+       (let [old-val value]
+         (set-value new-value)
+         (-notify-watches o old-val new-value))
        new-value)
 
      ISwap
@@ -42,7 +53,7 @@
 
 (defn state [value]
   #?(:cljs (let [[value set-value] (r/useState value)
-                 sh (r/useMemo #(StateHook. value set-value) #js [])]
+                 sh (r/useMemo #(StateHook. value set-value (volatile! {})) #js [])]
              (r/useMemo (fn []
                           (set! (.-value sh) value)
                           (set! (.-set-value sh) set-value)
@@ -55,7 +66,7 @@
 
 ;; == Ref hook
 #?(:cljs
-   (deftype RefHook [rref]
+   (deftype RefHook [rref watchers]
      IRef
      (unwrap [this]
        rref)
@@ -71,9 +82,20 @@
      (-deref [o]
        (gobj/get rref "current"))
 
+     IWatchable
+     (-notify-watches [this oldval newval]
+       (doseq [[k f] @watchers]
+         (f k this oldval newval)))
+     (-add-watch [_ k f]
+       (vswap! watchers assoc k f))
+     (-remove-watch [_ k]
+       (vswap! watchers dissoc k))
+
      IReset
      (-reset! [o new-value]
-       (gobj/set rref "current" new-value)
+       (let [old-val (-deref o)]
+         (gobj/set rref "current" new-value)
+         (-notify-watches o old-val new-value))
        new-value)
 
      ISwap
@@ -94,7 +116,7 @@
 
 (defn ref [value]
   #?(:cljs (let [vref (r/useRef value)]
-             (r/useMemo #(RefHook. vref) #js []))
+             (r/useMemo #(RefHook. vref (volatile! {})) #js []))
      :clj (atom value)))
 
 #?(:clj
@@ -246,7 +268,7 @@
 
 ;; == Derived state hook ==
 #?(:cljs
-   (deftype Cursor [ref path]
+   (deftype Cursor [ref path id]
      Object
      (equiv [this other]
        (-equiv this other))
@@ -258,9 +280,22 @@
      (-deref [o]
        (get-in @ref path))
 
+     IWatchable
+     (-notify-watches [this oldval newval]
+       (.warn js/console "-notify-watches called directly."))
+     (-add-watch [this k f]
+       (-add-watch ref [id path k]
+                   (fn [_ _ old-val new-val]
+                     (f k this (get-in old-val path) (get-in new-val path)))))
+     (-remove-watch [_ k]
+       (-remove-watch ref [id path k]))
+
      IReset
      (-reset! [o new-value]
-       (get-in (swap! ref update-in path (constantly new-value)) path))
+       (let [old-val (-deref o)
+             ret     (get-in (swap! ref update-in path (constantly new-value)) path)]
+         (-notify-watches o old-val new-value)
+         ret))
 
      ISwap
      (-swap! [o f]
@@ -280,4 +315,4 @@
 
 (defn cursor-in [ref path]
   #?(:clj (atom (get-in @ref path))
-     :cljs (memo #(Cursor. ref path) [ref path])))
+     :cljs (memo #(Cursor. ref path (random-uuid)) [ref path])))
